@@ -6,9 +6,16 @@ import { initDatabase, saveMessage, getRecentMessages, updateMessageReactions, c
 
 const server = http.createServer((req, res) => {
   // CORS заголовки
-  const allow = process.env.ALLOW_ORIGIN || "*";
-  res.setHeader("Access-Control-Allow-Origin", allow);
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  const allowedOrigins = (process.env.ALLOW_ORIGIN || "*").split(",").map(s => s.trim());
+  const origin = req.headers.origin;
+  
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  } else if (allowedOrigins.includes("*")) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
+  
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   
   if (req.method === "OPTIONS") {
@@ -136,7 +143,17 @@ const server = http.createServer((req, res) => {
 
 const io = new Server(server, {
   cors: {
-    origin: (process.env.ALLOW_ORIGIN || "*").split(",").map(s => s.trim())
+    origin: (req, callback) => {
+      const allowedOrigins = (process.env.ALLOW_ORIGIN || "*").split(",").map(s => s.trim());
+      const origin = req.header("Origin");
+      
+      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+        callback(null, origin || "*");
+      } else {
+        callback(new Error("Not allowed by CORS"), false);
+      }
+    },
+    credentials: true
   }
 });
 
