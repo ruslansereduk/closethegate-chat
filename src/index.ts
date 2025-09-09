@@ -1,7 +1,8 @@
 import { Server } from "socket.io";
 import http from "http";
 import crypto from "crypto";
-import { initDatabase, saveMessage, getRecentMessages, updateMessageReactions, cleanupOldMessages } from "./database.js";
+import { URL } from "url";
+import { initDatabase, saveMessage, getRecentMessages, updateMessageReactions, cleanupOldMessages, deleteMessage, getBlockedIPs, addBlockedIP, removeBlockedIP } from "./database.js";
 
 const server = http.createServer((req, res) => {
   // CORS заголовки
@@ -20,6 +21,111 @@ const server = http.createServer((req, res) => {
   if (req.url === "/health" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+  
+  // Админ API endpoints
+  const url = new URL(req.url || "", `http://${req.headers.host}`);
+  
+  // Проверка аутентификации для админ роутов
+  if (url.pathname.startsWith('/admin/')) {
+    if (!checkAdminAuth(req)) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+  }
+  
+  // Админ логин
+  if (url.pathname === "/admin/login" && req.method === "POST") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, message: "Authenticated" }));
+    return;
+  }
+  
+  // Получить все сообщения для админки
+  if (url.pathname === "/admin/messages" && req.method === "GET") {
+    try {
+      const messages = await getRecentMessages(1000);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(messages));
+    } catch (error) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to get messages" }));
+    }
+    return;
+  }
+  
+  // Удалить сообщение
+  if (url.pathname === "/admin/messages/delete" && req.method === "POST") {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { messageId } = JSON.parse(body);
+        await deleteMessage(messageId);
+        
+        // Уведомляем всех клиентов об удалении
+        io.emit("messageDeleted", { messageId });
+        
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Failed to delete message" }));
+      }
+    });
+    return;
+  }
+  
+  // Получить заблокированные IP
+  if (url.pathname === "/admin/blocked-ips" && req.method === "GET") {
+    try {
+      const blockedIPs = await getBlockedIPs();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(blockedIPs));
+    } catch (error) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to get blocked IPs" }));
+    }
+    return;
+  }
+  
+  // Заблокировать IP
+  if (url.pathname === "/admin/block-ip" && req.method === "POST") {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { ip, reason } = JSON.parse(body);
+        await addBlockedIP(ip, reason || "Blocked by admin");
+        
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Failed to block IP" }));
+      }
+    });
+    return;
+  }
+  
+  // Разблокировать IP
+  if (url.pathname === "/admin/unblock-ip" && req.method === "POST") {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { ip } = JSON.parse(body);
+        await removeBlockedIP(ip);
+        
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true }));
+      } catch (error) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Failed to unblock IP" }));
+      }
+    });
     return;
   }
   
@@ -44,6 +150,32 @@ type Msg = {
   userStatus?: string;
 };
 
+// Админ учетные данные
+const ADMIN_EMAIL = "ruslansereduk@gmail.com";
+const ADMIN_PASSWORD = "EnekValli123!";
+
+// Простая функция аутентификации
+function checkAdminAuth(req: http.IncomingMessage): boolean {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Basic ')) {
+    return false;
+  }
+  
+  const base64Credentials = authHeader.slice('Basic '.length);
+  const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
+  const [email, password] = credentials.split(':');
+  
+  return email === ADMIN_EMAIL && password === ADMIN_PASSWORD;
+}
+
+// Получение IP адреса клиента
+function getClientIP(req: http.IncomingMessage): string {
+  return (req.headers['x-forwarded-for'] as string)?.split(',')[0] || 
+         req.connection.remoteAddress || 
+         req.socket.remoteAddress || 
+         'unknown';
+}
+
 // Инициализируем базу данных при запуске
 initDatabase().catch(console.error);
 
@@ -51,7 +183,21 @@ initDatabase().catch(console.error);
 setInterval(cleanupOldMessages, 24 * 60 * 60 * 1000);
 
 io.on("connection", async socket => {
-  console.log("Client connected");
+  const clientIP = getClientIP(socket.request);
+  console.log("Client connected from:", clientIP);
+  
+  // Проверяем, заблокирован ли IP
+  try {
+    const blockedIPs = await getBlockedIPs();
+    if (blockedIPs.some(blocked => blocked.ip === clientIP)) {
+      console.log("Blocked IP attempted to connect:", clientIP);
+      socket.emit("blocked", { message: "Your IP is blocked" });
+      socket.disconnect(true);
+      return;
+    }
+  } catch (error) {
+    console.error("Error checking blocked IPs:", error);
+  }
   
   // Загружаем последние сообщения из базы данных
   try {

@@ -27,6 +27,16 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts DESC)
     `);
 
+    // Создаем таблицу заблокированных IP
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS blocked_ips (
+        id SERIAL PRIMARY KEY,
+        ip VARCHAR(45) UNIQUE NOT NULL,
+        reason TEXT,
+        blocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Добавляем новые поля, если они не существуют (миграция)
     try {
       await client.query(`
@@ -132,6 +142,70 @@ export async function cleanupOldMessages() {
     console.log('Old messages cleaned up');
   } catch (error) {
     console.error('Error cleaning up old messages:', error);
+  } finally {
+    client.release();
+  }
+}
+
+// Админ функции
+export async function deleteMessage(messageId: string) {
+  const client = await pool.connect();
+  try {
+    await client.query(
+      'DELETE FROM messages WHERE id = $1',
+      [messageId]
+    );
+    console.log('Message deleted:', messageId);
+  } catch (error) {
+    console.error('Error deleting message:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getBlockedIPs() {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      'SELECT ip, reason, blocked_at FROM blocked_ips ORDER BY blocked_at DESC'
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error getting blocked IPs:', error);
+    return [];
+  } finally {
+    client.release();
+  }
+}
+
+export async function addBlockedIP(ip: string, reason: string = 'Blocked by admin') {
+  const client = await pool.connect();
+  try {
+    await client.query(
+      'INSERT INTO blocked_ips (ip, reason) VALUES ($1, $2) ON CONFLICT (ip) DO NOTHING',
+      [ip, reason]
+    );
+    console.log('IP blocked:', ip);
+  } catch (error) {
+    console.error('Error blocking IP:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function removeBlockedIP(ip: string) {
+  const client = await pool.connect();
+  try {
+    await client.query(
+      'DELETE FROM blocked_ips WHERE ip = $1',
+      [ip]
+    );
+    console.log('IP unblocked:', ip);
+  } catch (error) {
+    console.error('Error unblocking IP:', error);
+    throw error;
   } finally {
     client.release();
   }
