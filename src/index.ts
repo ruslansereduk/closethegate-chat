@@ -9,6 +9,8 @@ const server = http.createServer((req, res) => {
   const allowedOrigins = (process.env.ALLOW_ORIGIN || "*").split(",").map(s => s.trim());
   const origin = req.headers.origin;
   
+  console.log("CORS Debug:", { allowedOrigins, origin, env: process.env.ALLOW_ORIGIN });
+  
   if (origin && allowedOrigins.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   } else if (allowedOrigins.includes("*")) {
