@@ -54,14 +54,16 @@ const server = http.createServer((req, res) => {
   
   // Получить все сообщения для админки
   if (url.pathname === "/admin/messages" && req.method === "GET") {
-    try {
-      const messages = await getRecentMessages(1000);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(messages));
-    } catch (error) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Failed to get messages" }));
-    }
+    (async () => {
+      try {
+        const messages = await getRecentMessages(1000);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(messages));
+      } catch (error) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Failed to get messages" }));
+      }
+    })();
     return;
   }
   
@@ -89,14 +91,16 @@ const server = http.createServer((req, res) => {
   
   // Получить заблокированные IP
   if (url.pathname === "/admin/blocked-ips" && req.method === "GET") {
-    try {
-      const blockedIPs = await getBlockedIPs();
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(blockedIPs));
-    } catch (error) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Failed to get blocked IPs" }));
-    }
+    (async () => {
+      try {
+        const blockedIPs = await getBlockedIPs();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(blockedIPs));
+      } catch (error) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Failed to get blocked IPs" }));
+      }
+    })();
     return;
   }
   
@@ -145,9 +149,9 @@ const server = http.createServer((req, res) => {
 
 const io = new Server(server, {
   cors: {
-    origin: (req, callback) => {
+    origin: (req: any, callback) => {
       const allowedOrigins = (process.env.ALLOW_ORIGIN || "*").split(",").map(s => s.trim());
-      const origin = req.header("Origin");
+      const origin = req?.headers?.origin;
       
       if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
         callback(null, origin || "*");
